@@ -4,27 +4,36 @@ import CoreImage
 
 class DepthMapProcessor {
     
-    private let model = try! DepthAnythingV2SmallF16()
-    private lazy var request: VNCoreMLRequest = {
-        
-        guard let visionModel = try? VNCoreMLModel(for: model.model)
-        else {
-            fatalError("📡 DepthEstimation configure : Fail")
-        }
-        
-        let request = VNCoreMLRequest(model: visionModel)
-        request.imageCropAndScaleOption = .scaleFill
-        
-        return request
-    }()
+    private var model: DepthAnythingV2SmallF16?
+    private var request: VNCoreMLRequest?
+    @Published public private(set) var isModelReady = false
     
-
+    init() {
+        loadModel()
+    }
+    
+    private func loadModel() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                self.model = try DepthAnythingV2SmallF16()
+                if let visionModel = try? VNCoreMLModel(for: self.model!.model) {
+                    let request = VNCoreMLRequest(model: visionModel)
+                    request.imageCropAndScaleOption = .scaleFill
+                    self.request = request
+                    self.isModelReady = true
+                }
+            } catch {
+                print("📡 DepthEstimation configure : Fail - \(error)")
+            }
+        }
+    }
     
     public func predict(_ ciImage: CIImage, invert: Bool = false) -> CIImage? {
+        guard isModelReady, let request = request else { return ciImage }
     
         let handler = VNImageRequestHandler(ciImage: ciImage)
         guard let depthMap = predict(handler)
-        else { return nil }
+        else { return ciImage }
         
         if invert {
             return depthMap
@@ -38,10 +47,13 @@ class DepthMapProcessor {
     }
     
     public func predict(_ pixelBuffer: CVPixelBuffer, invert: Bool = false) -> CIImage? {
+        guard isModelReady, let request = request else { 
+            return CIImage(cvPixelBuffer: pixelBuffer)
+        }
         
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer)
         guard let depthMap = predict(handler)
-        else { return nil }
+        else { return CIImage(cvPixelBuffer: pixelBuffer) }
         
         let height = CVPixelBufferGetHeight(pixelBuffer)
         let width = CVPixelBufferGetWidth(pixelBuffer)
@@ -58,6 +70,7 @@ class DepthMapProcessor {
     }
     
     private func predict(_ handler: VNImageRequestHandler) -> CIImage? {
+        guard let request = request else { return nil }
         
         try? handler.perform([request])
         
@@ -66,7 +79,6 @@ class DepthMapProcessor {
         else { return nil }
         
         return CIImage(cvPixelBuffer: pixelBuffer)
-        
     }
     
 }
